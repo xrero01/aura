@@ -354,7 +354,8 @@ async function start(deviceId) {
 
   const name = encodeURIComponent(($("camName") && $("camName").value) || "cam2");
   const proto = location.protocol === "https:" ? "wss" : "ws";
-  ws = new WebSocket(`${proto}://${location.host}/ws?role=${role}&name=${name}`);
+  const key = encodeURIComponent(localStorage.getItem("aura_key") || "");
+  ws = new WebSocket(`${proto}://${location.host}/ws?role=${role}&name=${name}&key=${key}`);
   ws.onopen = () => {
     $("status").classList.add("on"); $("statusTxt").textContent = "connected";
     if (role === "main") { sendConfig(); startRecorderLoop(); }
@@ -368,8 +369,14 @@ async function start(deviceId) {
     if (m.type === "error") addMsg("err", m.text);
     if (m.type === "reply_audio") playReply(m.audio_b64 || m.mp3_b64, m.mime);
   };
-  ws.onclose = () => {
+  ws.onclose = (ev) => {
     $("status").classList.remove("on"); $("statusTxt").textContent = "reconnecting…";
+    if (ev && ev.code === 4401) {   // server needs the passcode
+      const k = prompt("This Aura needs a passcode:");
+      if (k) { localStorage.setItem("aura_key", k.trim()); setTimeout(() => start().catch(() => {}), 300); }
+      else { running = false; $("statusTxt").textContent = "passcode needed"; }
+      return;
+    }
     if (running) setTimeout(() => start().catch(() => {}), 3000);
   };
   running = true;
