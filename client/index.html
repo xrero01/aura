@@ -451,8 +451,8 @@ $("powerBtn").onclick = () => {
 let audioCtx, analyser, vadTimer, vadRec, vadChunks = [];
 let speechActive = false, silenceStart = 0, speechStart = 0;
 const VAD_ON = 0.022;     // mic energy above this = you're speaking
-const VAD_OFF = 0.012;    // below this = silence
-const SILENCE_MS = 550;   // end the sentence after this much silence (snappier response)
+const VAD_OFF = 0.009;    // below this = silence (a bit more forgiving of soft syllables)
+const SILENCE_MS = 950;   // wait this long after you stop talking, so full sentences aren't cut off
 const MIN_UTTER_MS = 350; // ignore blips shorter than this (coughs, clicks)
 const MAX_UTTER_MS = 15000;
 
