@@ -309,10 +309,16 @@ function addMsg(cls, text) {
 
 /* ---------- audio unlock + playback with orb states ---------- */
 let audioQueue = [];
+let currentAudio = null;
+let speaking = false;          // true while Aura is talking (mutes the mic to stop echo)
+let muteUntil = 0;             // keep mic muted a moment after playback ends
 function playReply(b64, mime) {
+  // stop any reply still playing so two answers never overlap ("two voices")
+  if (currentAudio) { try { currentAudio.pause(); } catch (e) {} }
   const a = new Audio(`data:${mime || "audio/mpeg"};base64,` + b64);
-  a.onplay = () => setOrb("speaking");
-  a.onended = () => setOrb(running ? "listening" : "");
+  currentAudio = a;
+  a.onplay = () => { speaking = true; setOrb("speaking"); };
+  a.onended = () => { speaking = false; muteUntil = Date.now() + 700; setOrb(running ? "listening" : ""); };
   a.play().catch(() => { audioQueue.push(a); addMsg("err", "Tap anywhere once to enable sound"); });
 }
 document.addEventListener("pointerdown", () => {
@@ -397,6 +403,9 @@ function startRecorderLoop() {
   const audioOnly = new MediaStream(stream.getAudioTracks());
   recorder = new MediaRecorder(audioOnly, { mimeType: pickMime() });
   recorder.ondataavailable = e => {
+    // don't send mic audio while Aura is speaking (or just finished) — stops it
+    // hearing its own voice, which caused the doubled/echoed replies.
+    if (speaking || Date.now() < muteUntil) return;
     if (e.data.size > 2000 && ws && ws.readyState === 1) ws.send(e.data);
   };
   recorder.onstop = () => { if (running) startRecorderLoop(); };
