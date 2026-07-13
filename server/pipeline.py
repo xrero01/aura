@@ -31,6 +31,17 @@ import httpx
 PROVIDER = os.environ.get("AURA_PROVIDER", "openai").lower()
 BRAIN_PROVIDER = os.environ.get("AURA_BRAIN", PROVIDER).lower()
 
+# Force spoken replies into one language (e.g. "Arabic"). Empty = match the speaker.
+AURA_LANGUAGE = os.environ.get("AURA_LANGUAGE", "").strip()
+
+
+def _lang(system: str) -> str:
+    """Append a language directive to a spoken-output system prompt."""
+    if AURA_LANGUAGE:
+        return (system + f"\n\nIMPORTANT: Always reply ONLY in {AURA_LANGUAGE}, "
+                f"in natural {AURA_LANGUAGE}, no matter what language you hear.")
+    return system
+
 OPENAI_KEY = os.environ.get("OPENAI_API_KEY", "")
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "")
 ANTHROPIC_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
@@ -372,7 +383,7 @@ async def think(transcript_tail: str, frames: list[tuple[str, bytes]], memories:
     if memories:
         text += "Relevant memories:\n" + "\n".join(f"- {m}" for m in memories) + "\n\n"
     text += f"Recent transcript:\n{transcript_tail}"
-    return await llm_chat(BRAIN_PROMPT, text, frames, max_tokens=800 if detailed else 120)
+    return await llm_chat(_lang(BRAIN_PROMPT), text, frames, max_tokens=800 if detailed else 120)
 
 
 async def coach(lesson: str, transcript_tail: str, frames: list[tuple[str, bytes]],
@@ -381,7 +392,7 @@ async def coach(lesson: str, transcript_tail: str, frames: list[tuple[str, bytes
             + "\n".join(f"- {i}" for i in last_instructions[-5:])
             + f"\n\nRecent audio transcript:\n{transcript_tail or '(silence)'}")
     system = COACH_PROMPT.format(lesson=lesson, template=template)
-    return await llm_chat(system, text, frames, max_tokens=100)
+    return await llm_chat(_lang(system), text, frames, max_tokens=100)
 
 
 async def describe_frame(frame_jpeg: bytes) -> str:
@@ -391,4 +402,4 @@ async def describe_frame(frame_jpeg: bytes) -> str:
 
 async def summarize_lesson(lesson: str, instructions: list[str]) -> str:
     text = "Instructions given:\n" + "\n".join(f"- {i}" for i in instructions)
-    return await llm_chat(SUMMARY_PROMPT.format(lesson=lesson), text, max_tokens=250)
+    return await llm_chat(_lang(SUMMARY_PROMPT.format(lesson=lesson)), text, max_tokens=250)
