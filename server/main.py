@@ -40,6 +40,16 @@ MIN_AUDIO_GAP_S = 0.7          # drop audio chunks that arrive faster than this 
 # same value as ?key=... or it is refused. Unset = open (backward compatible).
 AURA_PASSCODE = os.environ.get("AURA_PASSCODE", "").strip()
 
+# Optional production error monitoring — set SENTRY_DSN to activate (crashes reported).
+SENTRY_DSN = os.environ.get("SENTRY_DSN", "").strip()
+if SENTRY_DSN:
+    try:
+        import sentry_sdk
+        sentry_sdk.init(dsn=SENTRY_DSN, traces_sample_rate=0.0, send_default_pii=False)
+        log.info("Sentry error monitoring enabled")
+    except Exception as e:  # noqa: BLE001
+        log.warning("Sentry init failed: %s", e)
+
 
 # ---------------------------------------------------------------- PWA assets
 
@@ -80,6 +90,12 @@ async def sw():
 @app.get("/lessons.json")
 async def lesson_names():
     return JSONResponse(lessons.names())
+
+
+@app.get("/health")
+async def health():
+    # lightweight readiness probe for uptime monitors / load balancers
+    return JSONResponse({"status": "ok", "connected": hub.main_ws is not None})
 
 
 # ---------------------------------------------------------------- hub state
