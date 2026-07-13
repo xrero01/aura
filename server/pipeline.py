@@ -56,7 +56,11 @@ OPENROUTER_STT = os.environ.get("AURA_OPENROUTER_STT_MODEL", "google/gemini-2.5-
 GEMINI_TTS_MODEL = "gemini-2.5-flash-preview-tts"
 GEMINI_TTS_VOICE = "Kore"
 OPENAI_TTS_VOICE = "nova"
-EDGE_TTS_VOICE = os.environ.get("AURA_EDGE_VOICE", "en-US-AriaNeural")
+# Spoken-reply voice. Default to a warm, widely-understood Arabic (Egyptian) female voice so
+# she always speaks clear, natural Arabic. AURA_EDGE_VOICE can override with any edge-tts voice,
+# but a non-Arabic override is ignored while replies are forced into Arabic.
+_ev = os.environ.get("AURA_EDGE_VOICE", "").strip()
+EDGE_TTS_VOICE = _ev if _ev.startswith("ar-") and not AURA_LANGUAGE else "ar-EG-SalmaNeural"
 
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -118,6 +122,11 @@ How to answer:
   the ACTUAL thing you see — name it, read its label, describe its details, its price tag
   if visible, who the person appears to be, etc. Weave real details from the image in.
 - If someone in the conversation asks the user a question, help the user answer it well.
+- ONE LANGUAGE + INTERPRETER: always speak to the user in Arabic only, never mixing languages.
+  If people around the user speak another language and the user asks what they said or to
+  translate, tell the user in clear natural Arabic what was said. For conversation, translation,
+  and describing what's happening around the user, speak in full natural Arabic sentences — not
+  clipped one-word replies.
 - To recall: use the memories provided, including [seen] memories of what the camera saw.
 - NEVER invent facts. If you don't know something, or it's about very recent or future
   events you cannot know, say so briefly and naturally — never guess or make up names,
@@ -585,6 +594,18 @@ async def summarize_day(items: list[str]) -> str:
         return ""
     text = "Moments saved today (oldest first):\n" + "\n".join(f"- {i}" for i in items)
     return await llm_chat(_lang(RECAP_PROMPT), text, max_tokens=400)
+
+
+TRANSLATE_PROMPT = """You are Aura, the user's live interpreter. Below is the recent speech heard
+around the user — it may be in another language. Tell the user, in clear natural Arabic, what was
+said and what is going on around them: translate any non-Arabic speech faithfully into Arabic;
+if it is already Arabic, briefly say what's happening. Speak directly to the user in natural full
+Arabic sentences, no preamble."""
+
+
+async def translate_around(transcript_tail: str) -> str:
+    text = "Recent speech around the user:\n" + (transcript_tail or "(nothing heard yet)")
+    return await llm_chat(_lang(TRANSLATE_PROMPT), text, max_tokens=400)
 
 
 async def summarize_lesson(lesson: str, instructions: list[str]) -> str:

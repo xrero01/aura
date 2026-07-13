@@ -55,6 +55,14 @@ RECALL_WORDS = (
     "تركت", "خليت", "نسيت", "مفاتيح", "المفتاح", "محفظت", "المحفظه", "المحفظة", "جوالي", "هاتفي",
 )
 
+# spoken phrases that ask Aura to translate / interpret what people around are saying
+TRANSLATE_WORDS = (
+    "translate", "interpret", "what did they say", "what are they saying", "what did he say",
+    "what did she say",
+    "ترجم", "ترجملي", "ترجمي", "ترجم لي", "شو قالوا", "وش قالوا", "ماذا قالوا", "ماذا قال",
+    "وش قال", "شو قال", "ايش قالوا", "شو يقولوا", "ماذا يحدث حولي", "شو صاير حولي", "وش صاير حولي",
+)
+
 import unicodedata as _ud
 
 
@@ -357,6 +365,16 @@ async def _process_audio(audio: bytes, ws=None) -> None:
     if any(w in low_text for w in RECAP_WORDS):
         await notify({"type": "transcript", "text": text}, ws)
         await speak_day_recap(ws)
+        return
+
+    # Interpreter: "ترجم / what did they say" -> tell the user in Arabic what was said around them.
+    if any(w in low_text for w in TRANSLATE_WORDS):
+        await notify({"type": "transcript", "text": text}, ws)
+        try:
+            out = await pipeline.translate_around(memory.recent_transcript(minutes=3))
+            await say(out or "ما سمعت كلام واضح حولك أترجمه. قرّب الميكروفون وجرّب مرة ثانية.", ws)
+        except Exception as e:  # noqa: BLE001
+            log.warning("translate failed: %s", e)
         return
 
     # "Just talk" mode: everything counts as addressed — no wake word needed.
