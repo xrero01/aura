@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: aura
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: AURA_PROVIDER
+        value: openrouter
+      - key: OPENROUTER_API_KEY
+        sync: false
