@@ -38,8 +38,9 @@ AURA_LANGUAGE = os.environ.get("AURA_LANGUAGE", "").strip()
 def _lang(system: str) -> str:
     """Append a language directive to a spoken-output system prompt."""
     if AURA_LANGUAGE:
-        return (system + f"\n\nIMPORTANT: Always reply ONLY in {AURA_LANGUAGE}, "
-                f"in natural {AURA_LANGUAGE}, no matter what language you hear.")
+        return (system + f"\n\nIMPORTANT: Always reply ONLY in {AURA_LANGUAGE}, in natural "
+                f"{AURA_LANGUAGE}, no matter what language you hear. Use only {AURA_LANGUAGE} "
+                f"words — never mix in English words or letters.")
     return system
 
 OPENAI_KEY = os.environ.get("OPENAI_API_KEY", "")
@@ -129,6 +130,40 @@ How to answer:
 - CRITICAL: Respond ONLY to the user's LATEST message (shown under "The user just said").
   Anything under "Earlier context" is only background for pronouns/topic — NEVER re-answer
   those older questions and NEVER repeat a previous answer. One reply, for the latest thing."""
+
+# Expert B2B-services sales knowledge, injected into the brain when the user asks a
+# sales question (so "practice & advice" answers are sharp, not generic).
+SALES_KNOWLEDGE = (
+    "The user works in B2B services sales. When they ask about selling, closing, deals, "
+    "clients, pricing, objections, discovery, negotiation, proposals, or follow-up, answer as a "
+    "world-class B2B sales expert. Be specific and practical: give the exact technique AND example "
+    "sentences they can actually say — never generic advice like 'be polite' or 'emphasize quality'.\n"
+    "Principles to apply:\n"
+    "- Discovery before pitching: ask open questions to uncover the client's real pain, what it "
+    "costs their business, who else decides, budget, and timeline (BANT). Listen about 70%.\n"
+    "- Sell value and ROI, never features; quantify the cost of leaving the problem unsolved.\n"
+    "- Objections — acknowledge, ask a question to find the real issue, then reframe. Price too high: "
+    "anchor to ROI and the cost of inaction, break price into value per outcome. 'I'll think about it': "
+    "surface the real hesitation and agree one small next step. 'Just send info': propose a short "
+    "specific call with an agenda. 'We already have a vendor': ask what they wish it did better. "
+    "'No budget': quantify the problem's cost and find who controls budget. Talking to a non-decider: "
+    "equip them to sell it internally and get a meeting with the real decision-maker.\n"
+    "- Watch buying signals (questions about price, onboarding, timeline) and trial-close.\n"
+    "- Answer direct questions such as price clearly and confidently, then trial-close.\n"
+    "- Close with a clear ask and always lock a concrete next step with a specific date.\n"
+    "- Negotiate by anchoring high and never discounting without getting something in return.\n"
+    "- For a follow-up message: reference the specific pain discussed, add one new insight or proof, "
+    "and propose a specific next step and time; give a short ready-to-send draft when asked."
+)
+
+# words that switch the brain into expert-sales mode (English + Arabic)
+SALES_WORDS = (
+    "sales", "selling", "sell ", "close the deal", "closing", "deal", "client", "customer",
+    "prospect", "objection", "pricing", "negotiat", "proposal", "follow up", "follow-up",
+    "upsell", "discount", "pitch",
+    "مبيعات", "بيع", "أبيع", "عميل", "عملاء", "زبون", "صفقة", "صفقات", "إغلاق", "اغلاق",
+    "اعتراض", "تسعير", "خصم", "تفاوض", "التفاوض", "متابعة", "صاحب القرار", "ميزانية العميل",
+)
 
 COACH_PROMPT = """You are Aura, a real-time {lesson} instructor speaking into your student's earbud.
 You receive camera views of what the student sees/does and a transcript of recent audio.
@@ -423,7 +458,11 @@ async def think(current: str, context: str, frames: list[tuple[str, bytes]],
             parts.append("Earlier context (background only — do NOT re-answer):\n" + ctx)
     parts.append(f'The user just said:\n"{current}"\n\nReply to THIS only.')
     text = "\n\n".join(parts)
-    return await llm_chat(_lang(BRAIN_PROMPT), text, frames, max_tokens=1500 if detailed else 320)
+    system = BRAIN_PROMPT
+    low = current.lower()
+    if any(w in low for w in SALES_WORDS):
+        system = BRAIN_PROMPT + "\n\n" + SALES_KNOWLEDGE
+    return await llm_chat(_lang(system), text, frames, max_tokens=1500 if detailed else 320)
 
 
 async def coach(lesson: str, transcript_tail: str, frames: list[tuple[str, bytes]],
