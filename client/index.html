@@ -28,7 +28,7 @@
     margin: 0; height: 100dvh; display: flex; flex-direction: column;
     background: radial-gradient(1200px 700px at 50% -10%, #101826 0%, var(--bg) 55%);
     color: var(--text);
-    font: 16px/1.5 -apple-system, "Segoe UI", Roboto, system-ui, sans-serif;
+    font: 16px/1.6 -apple-system, "Segoe UI", "Noto Sans Arabic", Tahoma, Roboto, system-ui, sans-serif;
     touch-action: manipulation; overflow: hidden;
   }
 
@@ -209,9 +209,9 @@
 <div id="splash">
   <div class="bigOrb"></div>
   <h1>Aura</h1>
-  <p>Your always-on assistant. It hears, sees and answers — just talk.</p>
-  <button class="btn primary" id="go">Start Aura</button>
-  <button class="btn" id="goCam">Join as extra camera</button>
+  <p dir="auto">مساعدك الذكي — يسمع ويرى ويجيبك. فقط تحدّث.<br><span style="opacity:.6;font-size:13px">Your always-on assistant — just talk</span></p>
+  <button class="btn primary" id="go">ابدأ · Start</button>
+  <button class="btn" id="goCam">كاميرا إضافية · Extra camera</button>
 </div>
 
 <header>
@@ -234,7 +234,7 @@
   </div>
 </div>
 
-<div id="feed"><div id="empty">Say anything — no wake word needed.<br>I'm listening and watching.</div></div>
+<div id="feed"><div id="empty" dir="auto">تحدّث بأي شيء — بدون كلمة تنبيه.<br>أنا أسمعك وأرى ما حولك.<br><span style="opacity:.55;font-size:12px">Speak naturally — I'm listening and watching</span></div></div>
 
 <div id="bar">
   <button class="btn iconOnly" id="teachBtn" aria-label="Lessons">
@@ -242,7 +242,7 @@
   </button>
   <button class="btn" id="pauseBtn" style="flex:1;max-width:190px;justify-content:center">
     <svg id="micIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><path d="M12 17v5"/></svg>
-    <span id="pauseTxt">Listening</span>
+    <span id="pauseTxt">يستمع</span>
   </button>
   <button class="btn iconOnly" id="gearBtn" aria-label="Settings">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
@@ -298,12 +298,13 @@ let ws, stream, recorder, frameTimer, running = false, lessonOn = false;
 
 const $ = id => document.getElementById(id);
 const setOrb = st => { const o = $("orb"); o.className = st;
-  $("orbLabel").textContent = { listening: "listening…", thinking: "thinking…", speaking: "speaking", "": running ? "paused" : "tap Start to wake me" }[st] ?? ""; };
+  $("orbLabel").textContent = { listening: "أستمع…", thinking: "أفكّر…", speaking: "أتحدّث", "": running ? "متوقّف مؤقتاً" : "اضغط ابدأ" }[st] ?? ""; };
 
 function addMsg(cls, text) {
   $("empty")?.remove();
   const d = document.createElement("div");
   d.className = "msg " + cls; d.textContent = text;
+  d.setAttribute("dir", "auto");   // Arabic renders right-to-left, English left-to-right
   $("feed").appendChild(d); $("feed").scrollTop = $("feed").scrollHeight;
 }
 
@@ -357,7 +358,7 @@ async function start(deviceId) {
   const key = encodeURIComponent(localStorage.getItem("aura_key") || "");
   ws = new WebSocket(`${proto}://${location.host}/ws?role=${role}&name=${name}&key=${key}`);
   ws.onopen = () => {
-    $("status").classList.add("on"); $("statusTxt").textContent = "connected";
+    $("status").classList.add("on"); $("statusTxt").textContent = "متصل";
     if (role === "main") { sendConfig(); startRecorderLoop(); }
     frameTimer = setInterval(sendFrame, FRAME_MS);
     setOrb("listening");
@@ -370,11 +371,11 @@ async function start(deviceId) {
     if (m.type === "reply_audio") playReply(m.audio_b64 || m.mp3_b64, m.mime);
   };
   ws.onclose = (ev) => {
-    $("status").classList.remove("on"); $("statusTxt").textContent = "reconnecting…";
+    $("status").classList.remove("on"); $("statusTxt").textContent = "إعادة اتصال…";
     if (ev && ev.code === 4401) {   // server needs the passcode
-      const k = prompt("This Aura needs a passcode:");
+      const k = prompt("أدخل رمز الدخول · Enter passcode:");
       if (k) { localStorage.setItem("aura_key", k.trim()); setTimeout(() => start().catch(() => {}), 300); }
-      else { running = false; $("statusTxt").textContent = "passcode needed"; }
+      else { running = false; $("statusTxt").textContent = "مطلوب رمز"; }
       return;
     }
     if (running) setTimeout(() => start().catch(() => {}), 3000);
@@ -382,7 +383,7 @@ async function start(deviceId) {
   running = true;
   keepAwake();
   localStorage.setItem("aura_ran", "1");
-  $("pauseTxt").textContent = "Listening"; $("pauseBtn").classList.remove("paused");
+  $("pauseTxt").textContent = "يستمع"; $("pauseBtn").classList.remove("paused");
 }
 
 function stop(silent) {
@@ -396,13 +397,13 @@ function stop(silent) {
   if (ws) { ws.onclose = null; ws.close(); }
   if (stream) stream.getTracks().forEach(t => t.stop());
   setOrb("");
-  $("status").classList.remove("on"); $("statusTxt").textContent = "off";
-  if (!silent) { $("pauseTxt").textContent = "Resume"; $("pauseBtn").classList.add("paused"); }
+  $("status").classList.remove("on"); $("statusTxt").textContent = "متوقّف";
+  if (!silent) { $("pauseTxt").textContent = "استئناف"; $("pauseBtn").classList.add("paused"); }
 }
 
 /* ---------- shutdown (full off) ---------- */
 $("powerBtn").onclick = () => {
-  if (!confirm("Shut down Aura completely?")) return;
+  if (!confirm("إيقاف Aura تماماً؟ · Shut down Aura?")) return;
   stop(true);
   localStorage.removeItem("aura_ran");   // won't auto-start next open
   if (window.AuraNative && AuraNative.shutdown) AuraNative.shutdown();
