@@ -450,7 +450,7 @@ let audioCtx, analyser, vadTimer, vadRec, vadChunks = [];
 let speechActive = false, silenceStart = 0, speechStart = 0;
 const VAD_ON = 0.022;     // mic energy above this = you're speaking
 const VAD_OFF = 0.012;    // below this = silence
-const SILENCE_MS = 900;   // end the sentence after this much silence
+const SILENCE_MS = 550;   // end the sentence after this much silence (snappier response)
 const MIN_UTTER_MS = 350; // ignore blips shorter than this (coughs, clicks)
 const MAX_UTTER_MS = 15000;
 
