@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0a0e13">
+<title>Aura Live</title>
+<style>
+  :root { --bg:#0a0e13; --surface:#141b24; --text:#e8eef5; --accent:#3ddc84; --border:#243244; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--text);
+    font-family:"Noto Sans Arabic", Tahoma, system-ui, sans-serif; }
+  #app { display:flex; flex-direction:column; height:100dvh; }
+  header { padding:14px 18px; font-weight:700; display:flex; justify-content:space-between; align-items:center; }
+  #status { font-size:13px; opacity:.7; }
+  #status.on { color:var(--accent); opacity:1; }
+  #main { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:18px; }
+  #orb { width:150px; height:150px; border-radius:50%;
+    background:radial-gradient(circle at 34% 30%, rgba(61,220,132,.55), rgba(61,220,132,.05) 62%);
+    box-shadow:0 0 60px rgba(61,220,132,.25); transition:transform .2s; }
+  #orb.speaking { transform:scale(1.12); }
+  #orb.listening { transform:scale(1.0); }
+  #orbLabel { opacity:.75; font-size:15px; }
+  #feed { width:100%; max-width:520px; padding:0 16px; max-height:34vh; overflow:auto; }
+  .msg { margin:8px 0; padding:10px 13px; border-radius:14px; font-size:15px; line-height:1.5; }
+  .heard { background:#10161e; opacity:.85; }
+  .aura { background:rgba(61,220,132,.12); border:1px solid rgba(61,220,132,.3); }
+  .err { background:rgba(255,90,90,.14); border:1px solid rgba(255,90,90,.35); }
+  footer { padding:16px; display:flex; justify-content:center; }
+  button { font:inherit; background:var(--accent); color:#04120a; border:none; border-radius:16px;
+    padding:15px 30px; font-weight:800; font-size:16px; min-width:200px; }
+  button.stop { background:#25303d; color:var(--text); }
+  video, canvas { display:none; }
+  .hint { opacity:.5; font-size:12px; text-align:center; padding:0 20px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header><span>Aura Live · مباشر</span><span id="status">اضغط ابدأ</span></header>
+  <div id="main">
+    <div id="orb" class="listening"></div>
+    <div id="orbLabel">جاهزة — اضغط ابدأ وتحدّث معي</div>
+    <div id="feed"></div>
+  </div>
+  <footer><button id="btn">ابدأ · Start</button></footer>
+  <p class="hint">نسخة الزمن الحقيقي (Gemini Live). تسمعني وتراني وتردّ فوراً بالعربية.</p>
+  <video id="cam" playsinline muted></video>
+  <canvas id="cv" width="640" height="480"></canvas>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+const params = new URLSearchParams(location.search);
+if (params.get("key")) localStorage.setItem("aura_key", params.get("key").trim());
+
+let ws, stream, micCtx, playCtx, proc, frameTimer, running = false;
+let nextPlayTime = 0;
+let sources = [];
+
+function status(t, on){ $("status").textContent = t; $("status").classList.toggle("on", !!on); }
+function orb(state){ $("orb").className = state; }
+function label(t){ $("orbLabel").textContent = t; }
+function addMsg(cls, text){
+  const d = document.createElement("div"); d.className = "msg " + cls; d.dir = "auto"; d.textContent = text;
+  $("feed").appendChild(d); $("feed").scrollTop = $("feed").scrollHeight;
+}
+
+async function start(){
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation:true, noiseSuppression:true, autoGainControl:true },
+      video: { facingMode:"environment", width:{ideal:640} }
+    });
+  } catch(e){ addMsg("err", "لم أستطع الوصول للميكروفون/الكاميرا: " + e.message); return; }
+  $("cam").srcObject = stream; $("cam").play().catch(()=>{});
+
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  const key = encodeURIComponent(localStorage.getItem("aura_key") || "");
+  ws = new WebSocket(`${proto}://${location.host}/live?key=${key}`);
+  ws.binaryType = "arraybuffer";
+
+  ws.onopen = () => { status("متصل", true); startMic(); startFrames(); orb("listening"); label("أستمع…"); };
+  ws.onmessage = (e) => {
+    if (typeof e.data === "string") handleEvent(JSON.parse(e.data));
+    else playPcm(e.data);
+  };
+  ws.onclose = (ev) => {
+    status("إعادة اتصال…"); stopMic();
+    if (ev && ev.code === 4401){
+      const k = prompt("أدخل رمز الدخول · Enter passcode:");
+      if (k){ localStorage.setItem("aura_key", k.trim()); setTimeout(()=>start(), 300); }
+      else { running=false; status("مطلوب رمز"); }
+      return;
+    }
+    if (running) setTimeout(()=>start(), 2000);
+  };
+  ws.onerror = () => status("خطأ اتصال");
+  running = true;
+  $("btn").textContent = "إيقاف · Stop"; $("btn").classList.add("stop");
+}
+
+function stop(){
+  running = false; stopMic();
+  if (ws){ try{ ws.close(); }catch(e){} }
+  if (frameTimer) clearInterval(frameTimer);
+  if (stream) stream.getTracks().forEach(t=>t.stop());
+  orb(""); label("متوقّف"); status("متوقّف");
+  $("btn").textContent = "ابدأ · Start"; $("btn").classList.remove("stop");
+}
+
+/* ---- microphone -> 16 kHz PCM -> server ---- */
+function startMic(){
+  micCtx = new (window.AudioContext || window.webkitAudioContext)();
+  const src = micCtx.createMediaStreamSource(stream);
+  proc = micCtx.createScriptProcessor(4096, 1, 1);
+  proc.onaudioprocess = (ev) => {
+    ev.outputBuffer.getChannelData(0).fill(0);          // stay silent (no echo out)
+    if (!ws || ws.readyState !== 1) return;
+    const input = ev.inputBuffer.getChannelData(0);
+    ws.send(floatToPCM16(input, micCtx.sampleRate));
+  };
+  src.connect(proc); proc.connect(micCtx.destination);
+}
+function stopMic(){ try{ if(proc) proc.disconnect(); if(micCtx) micCtx.close(); }catch(e){} proc=null; micCtx=null; }
+
+function floatToPCM16(input, srcRate){
+  const ratio = srcRate / 16000;
+  const outLen = Math.floor(input.length / ratio);
+  const out = new Int16Array(outLen);
+  let pos = 0;
+  for (let i=0; i<outLen; i++){
+    let s = input[Math.floor(pos)] || 0;
+    s = Math.max(-1, Math.min(1, s));
+    out[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+    pos += ratio;
+  }
+  return out.buffer;
+}
+
+/* ---- play back 24 kHz PCM from Gemini ---- */
+function playPcm(buf){
+  if (!playCtx) playCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (playCtx.state === "suspended") playCtx.resume();
+  const int16 = new Int16Array(buf);
+  const f32 = new Float32Array(int16.length);
+  for (let i=0;i<int16.length;i++) f32[i] = int16[i] / 32768;
+  const ab = playCtx.createBuffer(1, f32.length, 24000);
+  ab.getChannelData(0).set(f32);
+  const node = playCtx.createBufferSource();
+  node.buffer = ab; node.connect(playCtx.destination);
+  const now = playCtx.currentTime;
+  if (nextPlayTime < now) nextPlayTime = now + 0.04;
+  node.start(nextPlayTime);
+  nextPlayTime += ab.duration;
+  sources.push(node);
+  node.onended = () => { sources = sources.filter(s=>s!==node); };
+  orb("speaking"); label("أتحدّث");
+}
+function flushAudio(){ // barge-in: stop what she was saying
+  sources.forEach(s=>{ try{ s.stop(); }catch(e){} }); sources = [];
+  nextPlayTime = 0; orb("listening"); label("أستمع…");
+}
+
+/* ---- camera frames -> server (~1/sec) ---- */
+function startFrames(){
+  const v = $("cam"), c = $("cv"), ctx = c.getContext("2d");
+  frameTimer = setInterval(() => {
+    if (!ws || ws.readyState !== 1 || v.videoWidth === 0) return;
+    ctx.drawImage(v, 0, 0, c.width, c.height);
+    const b64 = c.toDataURL("image/jpeg", 0.6).split(",")[1];
+    ws.send(JSON.stringify({ type:"frame", jpeg_b64:b64 }));
+  }, 1000);
+}
+
+function handleEvent(m){
+  if (m.type === "ready") { status("جاهزة", true); }
+  else if (m.type === "heard") { addMsg("heard", m.text); orb("listening"); }
+  else if (m.type === "aura") { addMsg("aura", m.text); }
+  else if (m.type === "error") { addMsg("err", m.text); }
+  else if (m.type === "interrupted") { flushAudio(); }
+}
+
+$("btn").onclick = () => running ? stop() : start();
+</script>
+</body>
+</html>
