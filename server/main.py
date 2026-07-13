@@ -47,6 +47,14 @@ RECAP_WORDS = (
     "شو صار اليوم", "شو شفت اليوم", "لخصلي يومي", "خلاصة يومي",
 )
 
+# spoken phrases that ask Aura to recall where something is / what it saw
+RECALL_WORDS = (
+    "where is", "where's", "where did i", "where are", "find my", "did you see", "have you seen",
+    "remember where",
+    "وين", "فين", "أين", "اين", "وينها", "وينه", "شفت", "ما شفت", "لقيت", "ألقى", "حطيت",
+    "تركت", "خليت", "نسيت", "مفاتيح", "المفتاح", "محفظت", "المحفظه", "المحفظة", "جوالي", "هاتفي",
+)
+
 import unicodedata as _ud
 
 
@@ -334,9 +342,12 @@ async def _process_audio(audio: bytes, ws=None) -> None:
     if hub.is_repeat(text):
         log.info("skipped repeat (word-overlap): %s", text)
         return
-    # 2) smart check: just after Aura speaks, ask the model whether this is the wearer
-    #    relaying the line (robust to numbers-as-words, rewording, partial repeats).
-    if hub.last_reply_text and (time.time() - hub.last_reply_ts) < REPLY_GRACE_S:
+    # 2) smart check: just after Aura speaks, ask the model whether this is the wearer relaying
+    #    the line (robust to numbers-as-words, rewording, partial repeats). Only for SHORT
+    #    utterances — long repeats are already caught above, so this adds no latency to real
+    #    (usually longer) questions.
+    if (hub.last_reply_text and len(text.split()) <= 7
+            and (time.time() - hub.last_reply_ts) < REPLY_GRACE_S):
         if await pipeline.is_repeat_of_reply(hub.last_reply_text, text):
             log.info("skipped repeat (smart): %s", text)
             return
@@ -375,6 +386,13 @@ async def _process_audio(audio: bytes, ws=None) -> None:
 
     context = memory.recent_transcript(minutes=2)
     memories = memory.recall(emb, k=5) if emb else []
+    # Recall boost: for "where is my X / وين ..." questions, hand the brain the recent things it
+    # actually saw (by recency, not the weak embedding) so it can locate the item reliably.
+    if any(w in low_text for w in RECALL_WORDS):
+        for _ts, _kind, t in memory.recent_by_kind(("seen", "highlight"), hours=24, limit=30):
+            if t not in memories:
+                memories.append(t)
+        memories = memories[-30:]
     try:
         reply = await pipeline.think(text, context, hub.recent_frames(), memories,
                                      detailed=pipeline.wants_detail(text))

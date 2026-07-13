@@ -40,7 +40,7 @@ def _cosine(a: list[float], b: list[float]) -> float:
     return dot / (na * nb) if na and nb else 0.0
 
 
-def recall(query_embedding: list[float], k: int = 5, exclude_recent_s: float = 60) -> list[str]:
+def recall(query_embedding: list[float], k: int = 8, exclude_recent_s: float = 60) -> list[str]:
     """Top-k most similar memories.
 
     Recent 'heard' entries are skipped (they're already in the transcript context),
@@ -60,7 +60,7 @@ def recall(query_embedding: list[float], k: int = 5, exclude_recent_s: float = 6
     scored.sort(reverse=True)
     out = []
     for score, ts, kind, text in scored[:k]:
-        if score < 0.25:
+        if score < 0.18:
             continue
         when = time.strftime("%a %H:%M", time.localtime(ts))
         out.append(f"[{when}, {kind}] {text}")

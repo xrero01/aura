@@ -179,6 +179,15 @@ SALES_WORDS = (
     "اعتراض", "تسعير", "خصم", "تفاوض", "التفاوض", "متابعة", "صاحب القرار", "ميزانية العميل",
 )
 
+# only attach the live camera image when the question is really about what's in view —
+# otherwise we skip the image upload, which makes ordinary answers noticeably faster.
+VISUAL_WORDS = (
+    "this", "that", "what is", "what am i", "who is", "see", "look", "read", "picture", "photo",
+    "camera", "in front", "color", "colour", "label", "price tag", "product",
+    "هذا", "هذه", "ذلك", "أمامي", "قدامي", "تشوف", "شوف", "اقرأ", "الصورة", "شكل", "لون",
+    "وش هذا", "ما هذا", "ايش هذا", "منتج", "السعر المكتوب",
+)
+
 COACH_PROMPT = """You are Aura, a real-time {lesson} instructor speaking into your student's earbud.
 You receive camera views of what the student sees/does and a transcript of recent audio.
 {template}
@@ -495,7 +504,9 @@ async def think(current: str, context: str, frames: list[tuple[str, bytes]],
     low = current.lower()
     if any(w in low for w in SALES_WORDS):
         system = BRAIN_PROMPT + "\n\n" + SALES_KNOWLEDGE
-    return await llm_chat(_lang(system), text, frames, max_tokens=1500 if detailed else 320)
+    # skip the camera image unless the question is about what's in view (faster replies)
+    use_frames = frames if any(w in low for w in VISUAL_WORDS) else []
+    return await llm_chat(_lang(system), text, use_frames, max_tokens=1500 if detailed else 220)
 
 
 async def coach(lesson: str, transcript_tail: str, frames: list[tuple[str, bytes]],
