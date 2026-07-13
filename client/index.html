@@ -350,6 +350,7 @@ async function start(deviceId) {
     video
   });
   $("cam").srcObject = stream;
+  $("splash").classList.add("hidden");   // reveal the app ONLY once the camera is live
 
   const name = encodeURIComponent(($("camName") && $("camName").value) || "cam2");
   const proto = location.protocol === "https:" ? "wss" : "ws";
@@ -482,7 +483,7 @@ async function listDevices() {
 
 /* ---------- boot ---------- */
 $("go").onclick = () => {
-  $("splash").classList.add("hidden");
+  // start() hides the splash once the camera is live; on failure keep the button visible
   start().catch(e => addMsg("err", "Error: " + e.message));
 };
 $("goCam").onclick = async () => {
@@ -497,13 +498,12 @@ $("goCam").onclick = async () => {
   start($("devices").value).catch(e => addMsg("err", e.message));
 };
 
-// AUTO-START: ran before -> wake instantly on open (shutdown button clears this)
+// AUTO-START: ran before -> try to wake instantly on open. We do NOT hide the splash
+// up front — start() hides it only after the camera is live. So if auto-start is blocked
+// (e.g. the phone needs a tap to grant the camera), the Start button stays visible
+// instead of a black screen. The shutdown button clears aura_ran to disable this.
 if (role === "main" && localStorage.getItem("aura_ran")) {
-  $("splash").classList.add("hidden");
-  start().catch(e => {
-    $("splash").classList.remove("hidden");
-    addMsg("err", "Tap Start: " + e.message);
-  });
+  start().catch(() => { /* leave the Start button visible for a manual tap */ });
 }
 </script>
 </body>
