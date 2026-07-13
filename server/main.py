@@ -14,6 +14,7 @@ import base64
 import json
 import logging
 import os
+import re
 import time
 from pathlib import Path
 
@@ -35,6 +36,40 @@ COACH_INTERVAL_S = 20          # how often the lesson coach considers speaking
 FRAME_MAX_AGE_S = 20           # ignore camera frames older than this
 MAX_FRAME_BYTES = 3_000_000    # reject camera frames bigger than 3 MB (DoS guard)
 MIN_AUDIO_GAP_S = 0.7          # drop audio chunks that arrive faster than this (anti-spam)
+REPLY_ECHO_TTL_S = 75          # how long a reply stays "repeatable" without re-triggering Aura
+ECHO_OVERLAP = 0.7             # if this share of the heard words are in a recent reply -> it's a repeat
+
+import unicodedata as _ud
+
+
+def _normalize(text: str) -> str:
+    """Normalize text for repeat-detection: drop diacritics and punctuation and unify
+    Arabic alef/ya/ta-marbuta forms. Diacritics are detected by Unicode category
+    (nonspacing marks), so base letters are always preserved. Pure-ASCII source."""
+    t = "".join(c for c in text.lower() if _ud.category(c) != "Mn")
+    t = (t.replace("أ", "ا").replace("إ", "ا")
+         .replace("آ", "ا").replace("ى", "ي")
+         .replace("ة", "ه").replace("ـ", ""))
+    t = re.sub(r"[^\w؀-ۿ\s]", " ", t)
+    return re.sub(r"\s+", " ", t).strip()
+
+# Arabic diacritics (tashkeel) to strip so "repeat" matching is robust.
+_DEAD_UNUSED = None  # removed (superseded by _normalize): re.compile(r"[ؗ-ًؚ-ْٰۖ-ۭ]")
+
+
+# Correct tashkeel range (marks only, never base letters); ASCII \u escapes to be safe.
+_DEAD_UNUSED = None  # removed (superseded by _normalize): re.compile("[ؐ-ًؚ-ٰٟۖ-ۜ۟-۪ۨ-ۭ]")
+
+
+def _norm(text: str) -> str:
+    """Normalize for repeat-detection: drop diacritics/punctuation, unify letter forms."""
+    # strip only Arabic diacritic marks (never base letters) — explicit \u ranges
+    t = re.sub("[ؐ-ًؚ-ٰٟۖ-ۜ۟-۪ۨ-ۭ]",
+               "", text.lower())
+    t = (t.replace("أ", "ا").replace("إ", "ا").replace("آ", "ا")
+         .replace("ى", "ي").replace("ة", "ه").replace("ـ", ""))
+    t = re.sub(r"[^\w؀-ۿ\s]", " ", t)   # keep letters/digits/Arabic, drop punctuation
+    return re.sub(r"\s+", " ", t).strip()
 
 # Optional shared passcode. When AURA_PASSCODE is set, a connection must present the
 # same value as ?key=... or it is refused. Unset = open (backward compatible).
@@ -121,6 +156,9 @@ class Hub:
         self.busy = False
         self.coach_task: asyncio.Task | None = None
         self.rtsp_task: asyncio.Task | None = None
+        # what Aura recently told the wearer to say — so when the wearer repeats
+        # those words aloud, we recognize the echo and don't answer again.
+        self.recent_replies: list[tuple[set, float]] = []
 
     def put_frame(self, source: str, jpeg: bytes) -> None:
         self.frames[source] = (jpeg, time.time())
@@ -129,6 +167,25 @@ class Hub:
         now = time.time()
         return [(src, jpg) for src, (jpg, ts) in self.frames.items()
                 if now - ts < FRAME_MAX_AGE_S]
+
+    def remember_reply(self, text: str) -> None:
+        words = set(_normalize(text).split())
+        if words:
+            self.recent_replies.append((words, time.time()))
+            self.recent_replies = self.recent_replies[-6:]
+
+    def is_repeat(self, text: str) -> bool:
+        """True if the wearer is just repeating what Aura recently said."""
+        now = time.time()
+        heard = set(_normalize(text).split())
+        if not heard:
+            return False
+        for words, ts in self.recent_replies:
+            if now - ts > REPLY_ECHO_TTL_S:
+                continue
+            if len(heard & words) / len(heard) >= ECHO_OVERLAP:
+                return True
+        return False
 
 
 hub = Hub()
@@ -147,6 +204,7 @@ async def notify(payload: dict, ws=None) -> None:
 
 async def say(text: str, ws=None) -> None:
     """Send text + spoken audio to the wearer's earbuds."""
+    hub.remember_reply(text)   # so the wearer repeating this aloud won't re-trigger Aura
     await notify({"type": "reply_text", "text": text}, ws)
     memory.store("said_by_aura", text)
     try:
@@ -249,6 +307,13 @@ async def _process_audio(audio: bytes, ws=None) -> None:
         log.warning("STT failed: %s", e)
         return
     if not text or len(text) < 2:
+        return
+
+    # Repeat guard: the wearer speaks Aura's answers aloud to the person in front of
+    # them. When we hear those same words back, it's the wearer repeating — not a new
+    # question — so drop it instead of answering again.
+    if hub.is_repeat(text):
+        log.info("skipped repeat (wearer echoing Aura): %s", text)
         return
 
     # "Just talk" mode: everything counts as addressed — no wake word needed.
