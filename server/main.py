@@ -13,6 +13,7 @@ import asyncio
 import base64
 import json
 import logging
+import os
 import time
 from pathlib import Path
 
@@ -32,6 +33,12 @@ CLIENT = Path(__file__).parent.parent / "client" / "index.html"
 SCENE_MEMORY_INTERVAL_S = 30   # how often to describe & remember what cameras see
 COACH_INTERVAL_S = 20          # how often the lesson coach considers speaking
 FRAME_MAX_AGE_S = 20           # ignore camera frames older than this
+MAX_FRAME_BYTES = 3_000_000    # reject camera frames bigger than 3 MB (DoS guard)
+MIN_AUDIO_GAP_S = 0.7          # drop audio chunks that arrive faster than this (anti-spam)
+
+# Optional shared passcode. When AURA_PASSCODE is set, a connection must present the
+# same value as ?key=... or it is refused. Unset = open (backward compatible).
+AURA_PASSCODE = os.environ.get("AURA_PASSCODE", "").strip()
 
 
 # ---------------------------------------------------------------- PWA assets
@@ -94,6 +101,8 @@ class Hub:
         self.lesson = ""
         self.coach_history: list[str] = []
         self.last_scene_ts = 0.0
+        self.last_audio_ts = 0.0
+        self.busy = False
         self.coach_task: asyncio.Task | None = None
         self.rtsp_task: asyncio.Task | None = None
 
@@ -138,8 +147,13 @@ async def say(text: str, ws=None) -> None:
 @app.websocket("/ws")
 async def ws(websocket: WebSocket):
     await websocket.accept()
+    # --- authentication: reject connections without the shared passcode ---
+    if AURA_PASSCODE and websocket.query_params.get("key", "") != AURA_PASSCODE:
+        log.info("rejected connection: bad/missing key")
+        await websocket.close(code=4401)   # 4401 = client should prompt for the passcode
+        return
     role = websocket.query_params.get("role", "main")
-    name = websocket.query_params.get("name", "phone")
+    name = (websocket.query_params.get("name", "phone") or "phone")[:40]
     if role == "main":
         hub.main_ws = websocket
     log.info("connected: role=%s name=%s", role, name)
@@ -149,7 +163,12 @@ async def ws(websocket: WebSocket):
             if msg.get("type") == "websocket.disconnect":
                 raise WebSocketDisconnect(int(msg.get("code") or 1000))
             if msg.get("text"):
-                await handle_json(websocket, role, name, json.loads(msg["text"]))
+                try:
+                    data = json.loads(msg["text"])
+                except (ValueError, TypeError):
+                    continue   # ignore malformed JSON instead of dropping the connection
+                if isinstance(data, dict):
+                    await handle_json(websocket, role, name, data)
             elif msg.get("bytes") and role == "main":
                 await handle_audio_chunk(msg["bytes"], websocket)
     except WebSocketDisconnect:
@@ -164,8 +183,17 @@ async def ws(websocket: WebSocket):
 async def handle_json(websocket: WebSocket, role: str, name: str, data: dict) -> None:
     kind = data.get("type")
     if kind == "frame":
+        b64 = data.get("jpeg_b64") or ""
+        if not isinstance(b64, str) or len(b64) > MAX_FRAME_BYTES * 2:
+            return
+        try:
+            raw = base64.b64decode(b64, validate=True)
+        except Exception:  # noqa: BLE001
+            return
+        if not raw or len(raw) > MAX_FRAME_BYTES:
+            return
         source = name if role != "main" else "wearer"
-        hub.put_frame(source, base64.b64decode(data["jpeg_b64"]))
+        hub.put_frame(source, raw)
         if time.time() - hub.last_scene_ts > SCENE_MEMORY_INTERVAL_S:
             hub.last_scene_ts = time.time()
             asyncio.create_task(remember_scene())
@@ -174,14 +202,31 @@ async def handle_json(websocket: WebSocket, role: str, name: str, data: dict) ->
         hub.ambient = bool(data.get("ambient", hub.ambient))
         hub.answer_all = bool(data.get("answer_all", hub.answer_all))
         if "lesson" in data:
-            await set_lesson(str(data["lesson"]).strip())
+            await set_lesson(str(data["lesson"]).strip()[:80])
         if data.get("rtsp"):
-            start_rtsp(str(data["rtsp"]).strip())
+            url = str(data["rtsp"]).strip()
+            if url.lower().startswith("rtsp://"):   # only RTSP — blocks SSRF via file://, http://, etc.
+                start_rtsp(url)
+            else:
+                await notify({"type": "error", "text": "Only rtsp:// camera URLs are allowed."}, websocket)
 
 
 # ---------------------------------------------------------------- audio path
 
 async def handle_audio_chunk(audio: bytes, ws=None) -> None:
+    now = time.time()
+    # anti-spam + no-pileup: skip chunks that arrive too fast or while one is processing
+    if hub.busy or (now - hub.last_audio_ts) < MIN_AUDIO_GAP_S:
+        return
+    hub.last_audio_ts = now
+    hub.busy = True
+    try:
+        await _process_audio(audio, ws)
+    finally:
+        hub.busy = False
+
+
+async def _process_audio(audio: bytes, ws=None) -> None:
     try:
         text = await pipeline.transcribe(audio)
     except Exception as e:  # noqa: BLE001
@@ -217,8 +262,12 @@ async def handle_audio_chunk(audio: bytes, ws=None) -> None:
 
     context = memory.recent_transcript(minutes=2)
     memories = memory.recall(emb, k=5) if emb else []
-    reply = await pipeline.think(text, context, hub.recent_frames(), memories,
-                                 detailed=pipeline.wants_detail(text))
+    try:
+        reply = await pipeline.think(text, context, hub.recent_frames(), memories,
+                                     detailed=pipeline.wants_detail(text))
+    except Exception as e:  # noqa: BLE001
+        log.warning("think failed: %s", e)
+        return
     if reply:
         log.info("aura: %s", reply)
         await say(reply, ws)
