@@ -304,6 +304,8 @@ if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js");
 const CHUNK_MS = 4000, FRAME_MS = 3000;
 const params = new URLSearchParams(location.search);
 let role = params.get("role") || "main";
+// let the installed app (or a link) pass the passcode in the URL so it connects with no typing
+if (params.get("key")) localStorage.setItem("aura_key", params.get("key").trim());
 let ws, stream, recorder, frameTimer, running = false, lessonOn = false;
 
 const $ = id => document.getElementById(id);
