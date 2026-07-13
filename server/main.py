@@ -215,9 +215,9 @@ async def handle_audio_chunk(audio: bytes, ws=None) -> None:
         if not await pipeline.should_speak(text):
             return
 
-    context = memory.recent_transcript(minutes=3)
+    context = memory.recent_transcript(minutes=2)
     memories = memory.recall(emb, k=5) if emb else []
-    reply = await pipeline.think(context, hub.recent_frames(), memories,
+    reply = await pipeline.think(text, context, hub.recent_frames(), memories,
                                  detailed=pipeline.wants_detail(text))
     if reply:
         log.info("aura: %s", reply)

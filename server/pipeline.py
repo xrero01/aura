@@ -110,7 +110,10 @@ How to answer:
 - If someone in the conversation asks the user a question, help the user answer it well.
 - To recall: use the memories provided, including [seen] memories of what the camera saw.
 - Address the user directly and naturally. Never mention being an AI, never explain your
-  reasoning, never use markdown or bullet points — this is spoken aloud into an ear."""
+  reasoning, never use markdown or bullet points — this is spoken aloud into an ear.
+- CRITICAL: Respond ONLY to the user's LATEST message (shown under "The user just said").
+  Anything under "Earlier context" is only background for pronouns/topic — NEVER re-answer
+  those older questions and NEVER repeat a previous answer. One reply, for the latest thing."""
 
 COACH_PROMPT = """You are Aura, a real-time {lesson} instructor speaking into your student's earbud.
 You receive camera views of what the student sees/does and a transcript of recent audio.
@@ -391,12 +394,20 @@ async def should_speak(latest_utterance: str) -> bool:
     return "SPEAK" in reply.upper()
 
 
-async def think(transcript_tail: str, frames: list[tuple[str, bytes]], memories: list[str],
-                detailed: bool = False) -> str:
-    text = ""
+async def think(current: str, context: str, frames: list[tuple[str, bytes]],
+                memories: list[str], detailed: bool = False) -> str:
+    parts = []
     if memories:
-        text += "Relevant memories:\n" + "\n".join(f"- {m}" for m in memories) + "\n\n"
-    text += f"Recent transcript:\n{transcript_tail}"
+        parts.append("Relevant memories:\n" + "\n".join(f"- {m}" for m in memories))
+    ctx = (context or "").strip()
+    # keep only the lines BEFORE the current utterance as background
+    if ctx and ctx != current.strip():
+        if current.strip() and ctx.endswith(current.strip()):
+            ctx = ctx[: -len(current.strip())].strip()
+        if ctx:
+            parts.append("Earlier context (background only — do NOT re-answer):\n" + ctx)
+    parts.append(f'The user just said:\n"{current}"\n\nReply to THIS only.')
+    text = "\n\n".join(parts)
     return await llm_chat(_lang(BRAIN_PROMPT), text, frames, max_tokens=1500 if detailed else 320)
 
 
