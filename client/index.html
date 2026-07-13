@@ -291,7 +291,7 @@
 <script>
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js");
 
-const CHUNK_MS = 4000, FRAME_MS = 5000;
+const CHUNK_MS = 4000, FRAME_MS = 3000;
 const params = new URLSearchParams(location.search);
 let role = params.get("role") || "main";
 let ws, stream, recorder, frameTimer, running = false, lessonOn = false;
@@ -406,7 +406,10 @@ function startRecorderLoop() {
     // don't send mic audio while Aura is speaking (or just finished) — stops it
     // hearing its own voice, which caused the doubled/echoed replies.
     if (speaking || Date.now() < muteUntil) return;
-    if (e.data.size > 2000 && ws && ws.readyState === 1) ws.send(e.data);
+    if (e.data.size > 2000 && ws && ws.readyState === 1) {
+      sendFrame();          // attach the freshest camera view to this spoken chunk
+      ws.send(e.data);
+    }
   };
   recorder.onstop = () => { if (running) startRecorderLoop(); };
   recorder.start();
