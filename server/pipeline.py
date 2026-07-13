@@ -70,7 +70,14 @@ _http = httpx.AsyncClient(timeout=60)
 WAKE_WORDS = ("hey aura", "hey ora", "hey or a", "aura")
 
 DETAIL_WORDS = ("everything", "full guide", "explain", "in detail", "teach me",
-                "tell me all", "step by step", "history of", "how does", "how do")
+                "tell me all", "step by step", "history of", "how does", "how do",
+                # long-form creative / detailed requests (English)
+                "poem", "poetry", "story", "song", "write", "describe", "details",
+                "tell me about", "who is", "what is this", "product", "review",
+                # Arabic equivalents (transcribed Arabic speech)
+                "قصيدة", "قصيده", "اكتب", "اشرح", "قصة", "قصه", "أغنية", "اغنية",
+                "بالتفصيل", "كل شيء", "كل شى", "تفاصيل", "من هو", "ما هذا", "منتج",
+                "احك", "احكي", "صف", "وصف", "شرح", "قصائد", "بيت شعر")
 
 GATE_PROMPT = """You are the interruption gate for an ambient AI assistant worn by the user.
 You see the last thing transcribed from the user's surroundings. Decide if the assistant
@@ -84,19 +91,26 @@ Reply SPEAK only if:
 Otherwise reply STAY_SILENT. Be very conservative: interrupting is costly, silence is free.
 Reply with exactly one word: SPEAK or STAY_SILENT."""
 
-BRAIN_PROMPT = """You are Aura, a discreet AI copilot whispering into the user's earbud.
-You receive: recent transcript of what's happening around the user, possibly photos of
-what their cameras currently see, and relevant memories from earlier.
+BRAIN_PROMPT = """You are Aura, a sharp, warm AI companion whispering into the user's earbud
+while sitting with them in real life. You receive: the recent transcript of the conversation
+around the user, LIVE photos from their camera(s) of what is in front of them right now, and
+relevant memories from earlier.
 
-Rules:
-- Default: be SHORT, 1-2 spoken sentences. You are speaking into an ear, not writing an essay.
-- EXCEPTION: if the user explicitly asks to be taught, for a full guide, for details, or to
-  "tell me everything", give a complete spoken explanation (still conversational, no markdown).
-- If coaching a conversation: suggest the actual words or a concrete next question.
-- If asked about the scene: answer from the images.
-- If asked to recall (e.g. "where did I put my keys?"): answer from the memories provided,
-  including [seen] memories describing what the camera observed.
-- Never mention that you are an AI or explain your reasoning. Just deliver the useful thing."""
+How to answer:
+- Simple factual question or quick help: 1-3 natural spoken sentences. Don't ramble.
+- Creative or rich request — a POEM, a story, a song, a toast, a detailed explanation, a
+  product description, "tell me everything", "describe this": give the COMPLETE thing.
+  Write the FULL poem (several lines), the full explanation, the full product rundown.
+  Never cut a poem or story short, never say "here's a short version".
+- USE THE CAMERA. The photos show exactly what the user is looking at. When they say
+  "this", "that", "who is this", "what is this", "what am I looking at", or ask about a
+  product/object/person/place/text in view, look carefully at the image and answer about
+  the ACTUAL thing you see — name it, read its label, describe its details, its price tag
+  if visible, who the person appears to be, etc. Weave real details from the image in.
+- If someone in the conversation asks the user a question, help the user answer it well.
+- To recall: use the memories provided, including [seen] memories of what the camera saw.
+- Address the user directly and naturally. Never mention being an AI, never explain your
+  reasoning, never use markdown or bullet points — this is spoken aloud into an ear."""
 
 COACH_PROMPT = """You are Aura, a real-time {lesson} instructor speaking into your student's earbud.
 You receive camera views of what the student sees/does and a transcript of recent audio.
@@ -383,7 +397,7 @@ async def think(transcript_tail: str, frames: list[tuple[str, bytes]], memories:
     if memories:
         text += "Relevant memories:\n" + "\n".join(f"- {m}" for m in memories) + "\n\n"
     text += f"Recent transcript:\n{transcript_tail}"
-    return await llm_chat(_lang(BRAIN_PROMPT), text, frames, max_tokens=800 if detailed else 120)
+    return await llm_chat(_lang(BRAIN_PROMPT), text, frames, max_tokens=1500 if detailed else 320)
 
 
 async def coach(lesson: str, transcript_tail: str, frames: list[tuple[str, bytes]],
