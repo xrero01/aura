@@ -109,23 +109,26 @@ class Hub:
 hub = Hub()
 
 
-async def notify(payload: dict) -> None:
-    if hub.main_ws is not None:
+async def notify(payload: dict, ws=None) -> None:
+    # Send to a specific connection when given (so a reply goes back to the exact
+    # request that asked); otherwise to the current main connection (background events).
+    target = ws or hub.main_ws
+    if target is not None:
         try:
-            await hub.main_ws.send_text(json.dumps(payload))
+            await target.send_text(json.dumps(payload))
         except Exception:  # noqa: BLE001
             pass
 
 
-async def say(text: str) -> None:
+async def say(text: str, ws=None) -> None:
     """Send text + spoken audio to the wearer's earbuds."""
-    await notify({"type": "reply_text", "text": text})
+    await notify({"type": "reply_text", "text": text}, ws)
     memory.store("said_by_aura", text)
     try:
         audio = await pipeline.speak(text)
         await notify({"type": "reply_audio",
                       "audio_b64": base64.b64encode(audio).decode(),
-                      "mime": pipeline.AUDIO_MIME})
+                      "mime": pipeline.AUDIO_MIME}, ws)
     except Exception as e:  # noqa: BLE001
         log.warning("TTS failed: %s", e)
 
@@ -148,7 +151,7 @@ async def ws(websocket: WebSocket):
             if msg.get("text"):
                 await handle_json(websocket, role, name, json.loads(msg["text"]))
             elif msg.get("bytes") and role == "main":
-                await handle_audio_chunk(msg["bytes"])
+                await handle_audio_chunk(msg["bytes"], websocket)
     except WebSocketDisconnect:
         log.info("disconnected: role=%s name=%s", role, name)
         if role == "main":
@@ -178,7 +181,7 @@ async def handle_json(websocket: WebSocket, role: str, name: str, data: dict) ->
 
 # ---------------------------------------------------------------- audio path
 
-async def handle_audio_chunk(audio: bytes) -> None:
+async def handle_audio_chunk(audio: bytes, ws=None) -> None:
     try:
         text = await pipeline.transcribe(audio)
     except Exception as e:  # noqa: BLE001
@@ -196,7 +199,7 @@ async def handle_audio_chunk(audio: bytes) -> None:
         return
 
     log.info("heard: %s", text)
-    await notify({"type": "transcript", "text": text})
+    await notify({"type": "transcript", "text": text}, ws)
     try:
         emb = await pipeline.embed(text)
     except Exception:  # noqa: BLE001
@@ -218,7 +221,7 @@ async def handle_audio_chunk(audio: bytes) -> None:
                                  detailed=pipeline.wants_detail(text))
     if reply:
         log.info("aura: %s", reply)
-        await say(reply)
+        await say(reply, ws)
 
 
 # ---------------------------------------------------------------- lesson coach
