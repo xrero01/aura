@@ -64,8 +64,12 @@ public class MainActivity extends Activity {
         });
         setContentView(web);
 
-        String url = getSharedPreferences(PREFS, MODE_PRIVATE).getString(KEY_URL, null);
-        if (url == null) askForServerUrl(); else web.loadUrl(url);
+        // Always open the live Aura cloud app (natural voice + Looki life-log built in),
+        // with the passcode in the URL so it connects with zero typing. This also overwrites
+        // any old/dead address the app may have saved before.
+        String live = "https://hammerhead-app-uqmvb.ondigitalocean.app/?key=moustafa-aura-71";
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString(KEY_URL, live).apply();
+        web.loadUrl(live);
     }
 
     private void askForServerUrl() {
