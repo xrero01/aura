@@ -188,6 +188,7 @@
     padding: 9px 14px; min-height: 38px; border-radius: 999px; font-size: 13.5px;
     background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
   }
+  .chip.on { background: rgba(61,220,132,.18); border-color: #3ddc84; color: #eafff2; }
   .sheetBtn { width: 100%; margin-top: 12px; justify-content: center; display: flex; }
 
   /* ---------- splash ---------- */
@@ -277,6 +278,15 @@
     <label class="switch"><input type="checkbox" id="ambient" checked><span></span></label>
   </div>
 
+  <h2 style="margin-top:24px" dir="auto">اليوميات · Life-log</h2>
+  <div class="chips" id="modeChips">
+    <button class="chip on" data-mode="everyday" dir="auto">يومي · Everyday</button>
+    <button class="chip" data-mode="event" dir="auto">مناسبة · Event</button>
+    <button class="chip" data-mode="fitness" dir="auto">رياضة · Fitness</button>
+  </div>
+  <button class="btn primary sheetBtn" id="recapBtn" dir="auto">لخّص يومي · Recap my day</button>
+  <p class="mini" style="margin:10px 0 0" dir="auto">Aura يحفظ لحظاتك المهمة تلقائياً ويختار الوضع المناسب. قل «لخّص يومي» في أي وقت لسماع ملخص يومك.</p>
+
   <h2 style="margin-top:24px">Extra cameras</h2>
   <input type="text" id="rtsp" placeholder="rtsp:// action-cam URL" autocomplete="off">
   <button class="btn sheetBtn" id="rtspBtn">Add camera</button>
@@ -342,6 +352,26 @@ function sendConfig() {
 }
 ["proactive", "ambient", "answerAll"].forEach(id => $(id).onchange = sendConfig);
 
+/* ---------- life-log: modes + recap (Looki-style) ---------- */
+let currentMode = "everyday";
+function setMode(mode, send) {
+  if (!["everyday", "event", "fitness"].includes(mode)) return;
+  currentMode = mode;
+  document.querySelectorAll("#modeChips .chip").forEach(c =>
+    c.classList.toggle("on", c.dataset.mode === mode));
+  if (send && ws && ws.readyState === 1)
+    ws.send(JSON.stringify({ type: "config", mode }));
+}
+document.querySelectorAll("#modeChips .chip").forEach(c =>
+  c.onclick = () => setMode(c.dataset.mode, true));
+$("recapBtn").onclick = () => {
+  if (ws && ws.readyState === 1) {
+    ws.send(JSON.stringify({ type: "recap" }));
+    addMsg("heard", "لخّص يومي");
+  }
+  closeSheet();
+};
+
 /* ---------- start / stop ---------- */
 async function start(deviceId) {
   const video = deviceId ? { deviceId: { exact: deviceId }, width: { ideal: 640 } }
@@ -369,6 +399,8 @@ async function start(deviceId) {
     if (m.type === "reply_text") addMsg("aura", m.text);
     if (m.type === "error") addMsg("err", m.text);
     if (m.type === "reply_audio") playReply(m.audio_b64 || m.mp3_b64, m.mime);
+    if (m.type === "highlight") addMsg("aura", "✨ " + m.text);
+    if (m.type === "mode") setMode(m.mode, false);
   };
   ws.onclose = (ev) => {
     $("status").classList.remove("on"); $("statusTxt").textContent = "إعادة اتصال…";
