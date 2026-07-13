@@ -157,6 +157,26 @@ async def health():
     return JSONResponse({"status": "ok", "connected": hub.main_ws is not None})
 
 
+# ---- Aura 2.0 (Path A): real-time Gemini Live, on its own endpoint ----
+
+@app.get("/live.html")
+async def live_page():
+    return FileResponse(Path(__file__).parent.parent / "client" / "live.html")
+
+
+@app.websocket("/live")
+async def live_ws(websocket: WebSocket):
+    await websocket.accept()
+    if AURA_PASSCODE and websocket.query_params.get("key", "") != AURA_PASSCODE:
+        await websocket.close(code=4401)
+        return
+    try:
+        import live
+        await live.bridge(websocket)
+    except Exception as e:  # noqa: BLE001
+        log.warning("live endpoint failed: %s", e)
+
+
 # ---------------------------------------------------------------- hub state
 
 class Hub:
