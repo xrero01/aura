@@ -399,7 +399,7 @@ def stop_lesson() -> None:
 
 
 async def coach_loop() -> None:
-    await say(f"Okay, starting your {hub.lesson} lesson. I'm watching — let's begin.")
+    await say(f"تمام، يلا نبدأ درس {hub.lesson}. أنا معاك وبشوف اللي قدامك — ابدأ وقت ما تجهز.")
     try:
         while hub.lesson and hub.main_ws is not None:
             await asyncio.sleep(COACH_INTERVAL_S)
