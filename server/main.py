@@ -40,6 +40,13 @@ REPLY_ECHO_TTL_S = 75          # how long a reply stays "repeatable" without re-
 ECHO_OVERLAP = 0.7             # if this share of the heard words are in a recent reply -> it's a repeat
 REPLY_GRACE_S = 35             # after Aura speaks, use the smart repeat-check for this long
 
+# spoken phrases that ask Aura to recap the day (Looki-style life-log)
+RECAP_WORDS = (
+    "recap my day", "summarize my day", "review my day", "what did i see", "what happened today",
+    "لخص يومي", "لخص لي يومي", "ملخص يومي", "ملخص اليوم", "ماذا رأيت اليوم", "ماذا حدث اليوم",
+    "شو صار اليوم", "شو شفت اليوم", "لخصلي يومي", "خلاصة يومي",
+)
+
 import unicodedata as _ud
 
 
@@ -151,6 +158,7 @@ class Hub:
         # The phone UI enables this by default ("Just talk" mode).
         self.answer_all = False
         self.lesson = ""
+        self.mode = "everyday"        # Looki-style life-log mode: everyday | event | fitness
         self.coach_history: list[str] = []
         self.last_scene_ts = 0.0
         self.last_audio_ts = 0.0
@@ -276,10 +284,15 @@ async def handle_json(websocket: WebSocket, role: str, name: str, data: dict) ->
         if time.time() - hub.last_scene_ts > SCENE_MEMORY_INTERVAL_S:
             hub.last_scene_ts = time.time()
             asyncio.create_task(remember_scene())
+    elif kind == "recap" and role == "main":
+        await speak_day_recap(websocket)
     elif kind == "config" and role == "main":
         hub.proactive = bool(data.get("proactive", hub.proactive))
         hub.ambient = bool(data.get("ambient", hub.ambient))
         hub.answer_all = bool(data.get("answer_all", hub.answer_all))
+        if data.get("mode") in ("everyday", "event", "fitness"):
+            hub.mode = data["mode"]
+            log.info("mode set: %s", hub.mode)
         if "lesson" in data:
             await set_lesson(str(data["lesson"]).strip()[:80])
         if data.get("rtsp"):
@@ -327,6 +340,13 @@ async def _process_audio(audio: bytes, ws=None) -> None:
         if await pipeline.is_repeat_of_reply(hub.last_reply_text, text):
             log.info("skipped repeat (smart): %s", text)
             return
+
+    # Life-log recap: "recap my day / لخص يومي" -> summarize saved highlights out loud.
+    low_text = text.lower()
+    if any(w in low_text for w in RECAP_WORDS):
+        await notify({"type": "transcript", "text": text}, ws)
+        await speak_day_recap(ws)
+        return
 
     # "Just talk" mode: everything counts as addressed — no wake word needed.
     addressed = hub.answer_all or pipeline.has_wake_word(text)
@@ -459,13 +479,54 @@ async def rtsp_loop(url: str) -> None:
 # ---------------------------------------------------------------- scene memory
 
 async def remember_scene() -> None:
-    """Describe what the cameras see and store it as 'seen' memories."""
+    """Describe what the cameras see, store it, auto-detect the mode, and proactively save
+    highlights — the Looki-style always-on life-log."""
+    scene_parts: list[str] = []
     for label, jpeg in hub.recent_frames():
         try:
-            desc = await pipeline.describe_frame(jpeg)
+            desc = await pipeline.describe_frame(jpeg, mode=hub.mode)
             if desc:
                 emb = await pipeline.embed(desc)
                 memory.store("seen", f"({label}) {desc}", emb)
+                scene_parts.append(desc)
                 log.info("seen [%s]: %s", label, desc)
         except Exception as e:  # noqa: BLE001
             log.warning("scene memory failed: %s", e)
+
+    scene = " ".join(scene_parts)
+    tail = memory.recent_transcript(minutes=1)
+
+    # auto-switch mode (event / fitness / everyday) from what's going on
+    try:
+        m = await pipeline.detect_mode(scene, tail)
+        if m and m != hub.mode:
+            hub.mode = m
+            await notify({"type": "mode", "mode": m})
+            log.info("mode auto-switched: %s", m)
+    except Exception as e:  # noqa: BLE001
+        log.warning("mode detect failed: %s", e)
+
+    # proactively save a highlight if this moment matters
+    try:
+        highlight = await pipeline.detect_highlight(scene, tail)
+        if highlight:
+            emb = await pipeline.embed(highlight)
+            memory.store("highlight", highlight, emb)
+            await notify({"type": "highlight", "text": highlight})
+            log.info("highlight saved: %s", highlight)
+    except Exception as e:  # noqa: BLE001
+        log.warning("highlight detect failed: %s", e)
+
+
+async def speak_day_recap(ws=None) -> None:
+    """Summarize today's saved highlights (and scenes) into a spoken recap."""
+    rows = memory.recent_by_kind(("highlight", "seen"), hours=24, limit=60)
+    items = [text for _ts, _kind, text in rows]
+    # prefer highlights; fall back to recent scenes
+    highlights = [t for _ts, k, t in rows if k == "highlight"]
+    use = highlights or items
+    if not use:
+        await say("لسه ما سجّلت لحظات من يومك — خليني أراقب وأسمع شوي وبحفظ المهم أول بأول.", ws)
+        return
+    recap = await pipeline.summarize_day(use[-40:])
+    await say(recap or "مرّ يومك بهدوء، ما في لحظات كبيرة أسجّلها لحد الآن.", ws)

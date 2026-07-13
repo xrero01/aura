@@ -67,6 +67,20 @@ def recall(query_embedding: list[float], k: int = 5, exclude_recent_s: float = 6
     return out
 
 
+def recent_by_kind(kinds: tuple[str, ...], hours: float = 24, limit: int = 200) -> list[tuple]:
+    """Recent memories of the given kinds within a time window (for day recaps/search).
+    Returns (ts, kind, text) rows oldest-first."""
+    cutoff = time.time() - hours * 3600
+    placeholders = ",".join("?" for _ in kinds)
+    with _conn() as conn:
+        rows = conn.execute(
+            f"SELECT ts, kind, text FROM memories WHERE ts >= ? AND kind IN ({placeholders}) "
+            "ORDER BY ts",
+            (cutoff, *kinds),
+        ).fetchall()
+    return rows[-limit:]
+
+
 def recent_transcript(minutes: float = 3, max_chars: int = 2000) -> str:
     """The rolling context window of what was just heard."""
     cutoff = time.time() - minutes * 60

@@ -507,9 +507,73 @@ async def coach(lesson: str, transcript_tail: str, frames: list[tuple[str, bytes
     return await llm_chat(_lang(system), text, frames, max_tokens=100)
 
 
-async def describe_frame(frame_jpeg: bytes) -> str:
-    return await llm_chat(SCENE_PROMPT, "Describe this frame.", [("view", frame_jpeg)],
-                          max_tokens=80)
+# ---- Looki-style life-log: modes, proactive highlights, day recap ----
+
+SCENE_FOCUS = {
+    "event": " Focus on people, faces, names, badges, business cards, and social interactions.",
+    "fitness": " Focus on the physical activity, movement, exercise, form, effort, and surroundings.",
+    "everyday": " Focus on objects and their locations, text, documents, places, and tasks.",
+}
+
+
+async def describe_frame(frame_jpeg: bytes, mode: str = "") -> str:
+    prompt = SCENE_PROMPT + SCENE_FOCUS.get(mode, "")
+    return await llm_chat(prompt, "Describe this frame.", [("view", frame_jpeg)], max_tokens=80)
+
+
+MODE_PROMPT = """Classify the user's current situation into exactly ONE word based on the camera
+scene and recent audio:
+EVENT (meeting people, networking, a party, travelling, out and about),
+FITNESS (exercising, gym, running, sport, any physical activity),
+EVERYDAY (home, work/desk, errands, ordinary routine).
+Reply with only one word: EVENT, FITNESS, or EVERYDAY."""
+
+
+async def detect_mode(scene: str, transcript_tail: str) -> str:
+    text = f"Camera sees:\n{scene or '(nothing clear)'}\n\nRecent audio:\n{transcript_tail or '(quiet)'}"
+    try:
+        out = (await llm_chat(MODE_PROMPT, text, max_tokens=3)).upper()
+    except Exception:  # noqa: BLE001
+        return ""
+    if "EVENT" in out:
+        return "event"
+    if "FITNESS" in out:
+        return "fitness"
+    if "EVERYDAY" in out:
+        return "everyday"
+    return ""
+
+
+HIGHLIGHT_PROMPT = """You are Aura's proactive life-log, like a smart wearable that saves the
+moments that matter without being asked. Given what the camera sees and the recent talk, decide
+if THIS moment is a genuine highlight worth saving: meeting or being introduced to a person, a
+name worth remembering, an important fact or decision, a document/receipt/place, a milestone, or
+a warm or notable moment. If yes, reply with ONE short caption (max 12 words) describing it. If
+it is ordinary and nothing stands out, reply with exactly: NONE."""
+
+
+async def detect_highlight(scene: str, transcript_tail: str) -> str:
+    text = f"Camera sees:\n{scene or '(nothing clear)'}\n\nRecent talk:\n{transcript_tail or '(quiet)'}"
+    try:
+        out = (await llm_chat(_lang(HIGHLIGHT_PROMPT), text, max_tokens=30)).strip()
+    except Exception:  # noqa: BLE001
+        return ""
+    if not out or out.upper().startswith("NONE"):
+        return ""
+    return out
+
+
+RECAP_PROMPT = """You are Aura giving the user a warm, natural spoken recap of their day, built
+from the moments you saved. In 3-6 natural spoken sentences: walk through what happened, the
+people and things that mattered, and end with one friendly insight or gentle suggestion. Talk
+like a real person catching a friend up — no lists, no markdown, no headings."""
+
+
+async def summarize_day(items: list[str]) -> str:
+    if not items:
+        return ""
+    text = "Moments saved today (oldest first):\n" + "\n".join(f"- {i}" for i in items)
+    return await llm_chat(_lang(RECAP_PROMPT), text, max_tokens=400)
 
 
 async def summarize_lesson(lesson: str, instructions: list[str]) -> str:
