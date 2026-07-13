@@ -38,6 +38,7 @@ MAX_FRAME_BYTES = 3_000_000    # reject camera frames bigger than 3 MB (DoS guar
 MIN_AUDIO_GAP_S = 0.7          # drop audio chunks that arrive faster than this (anti-spam)
 REPLY_ECHO_TTL_S = 75          # how long a reply stays "repeatable" without re-triggering Aura
 ECHO_OVERLAP = 0.7             # if this share of the heard words are in a recent reply -> it's a repeat
+REPLY_GRACE_S = 35             # after Aura speaks, use the smart repeat-check for this long
 
 import unicodedata as _ud
 
@@ -159,6 +160,8 @@ class Hub:
         # what Aura recently told the wearer to say — so when the wearer repeats
         # those words aloud, we recognize the echo and don't answer again.
         self.recent_replies: list[tuple[set, float]] = []
+        self.last_reply_text = ""     # raw text of the most recent reply (for the smart check)
+        self.last_reply_ts = 0.0
 
     def put_frame(self, source: str, jpeg: bytes) -> None:
         self.frames[source] = (jpeg, time.time())
@@ -169,6 +172,8 @@ class Hub:
                 if now - ts < FRAME_MAX_AGE_S]
 
     def remember_reply(self, text: str) -> None:
+        self.last_reply_text = text
+        self.last_reply_ts = time.time()
         words = set(_normalize(text).split())
         if words:
             self.recent_replies.append((words, time.time()))
@@ -312,9 +317,16 @@ async def _process_audio(audio: bytes, ws=None) -> None:
     # Repeat guard: the wearer speaks Aura's answers aloud to the person in front of
     # them. When we hear those same words back, it's the wearer repeating — not a new
     # question — so drop it instead of answering again.
+    # 1) fast word-overlap check catches verbatim/near-verbatim repeats for free.
     if hub.is_repeat(text):
-        log.info("skipped repeat (wearer echoing Aura): %s", text)
+        log.info("skipped repeat (word-overlap): %s", text)
         return
+    # 2) smart check: just after Aura speaks, ask the model whether this is the wearer
+    #    relaying the line (robust to numbers-as-words, rewording, partial repeats).
+    if hub.last_reply_text and (time.time() - hub.last_reply_ts) < REPLY_GRACE_S:
+        if await pipeline.is_repeat_of_reply(hub.last_reply_text, text):
+            log.info("skipped repeat (smart): %s", text)
+            return
 
     # "Just talk" mode: everything counts as addressed — no wake word needed.
     addressed = hub.answer_all or pipeline.has_wake_word(text)

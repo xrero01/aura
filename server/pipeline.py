@@ -448,6 +448,25 @@ async def should_speak(latest_utterance: str) -> bool:
     return "SPEAK" in reply.upper()
 
 
+REPEAT_GATE = """You are Aura's earbud assistant. A moment ago you told the user a line to say
+out loud to the person in front of them. Now you hear the user speaking. Decide: is the user
+simply REPEATING or relaying that line to the other person — even if reworded, numbers spoken
+as words instead of digits, colloquial, or only part of it — OR is this something NEW (a new
+question or statement, from the user or someone else) that needs a fresh answer?
+Reply with exactly one word: REPEAT or NEW."""
+
+
+async def is_repeat_of_reply(reply: str, utterance: str) -> bool:
+    """True if the wearer is just relaying Aura's own recent line (robust to numbers spoken
+    as words, rewording, and partial repeats — the word-overlap check can't catch those)."""
+    msg = f'You told the user to say:\n"{reply}"\n\nNow you hear the user say:\n"{utterance}"'
+    try:
+        out = await llm_chat(REPEAT_GATE, msg, max_tokens=3)
+    except Exception:  # noqa: BLE001
+        return False
+    return "REPEAT" in out.upper()
+
+
 async def think(current: str, context: str, frames: list[tuple[str, bytes]],
                 memories: list[str], detailed: bool = False) -> str:
     parts = []
